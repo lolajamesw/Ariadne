@@ -5,6 +5,8 @@ from .ids import mermaid_id
 
 MAX_UML_ATTRS = 10
 MAX_UML_METHODS = 12
+SHAPES = {"rect": ("[", "]"), "stadium": ("([", "])"), "diamond": ("{", "}"), "hexagon": ("{{", "}}"), "round": ("(", ")")}
+DASHED_KINDS = {"flow_dashed", "call_unresolved"}
 
 
 def _q(text: str) -> str:
@@ -28,7 +30,7 @@ def _edges(d: dict, rep: dict[str, str]):
         a, b = rep.get(e["source"], e["source"]), rep.get(e["target"], e["target"])
         if a == b:
             continue
-        key = (a, b, e["kind"])
+        key = (a, b, e["kind"], "" if e["label"].isdigit() else e["label"])
         if key in merged:
             m = merged[key]
             if m["label"].isdigit() and e["label"].isdigit():
@@ -63,7 +65,12 @@ def _node_line(n: dict) -> str:
         if extra:
             label = f'{label}<br/><small>{_q(" · ".join(extra))}</small>'
         return f'{mermaid_id(n["id"])}["{label if "<br/>" in label else _q(label)}"]'
-    return f'{mermaid_id(n["id"])}["{_q(label)}"]'
+    if n["type"] == "function":
+        base = n["path"].rsplit("/", 1)[-1] if n.get("path") else ""
+        return f'{mermaid_id(n["id"])}["{_q(label)}<br/><small>{_q(base)}</small>"]'
+    shape = n.get("shape", "rect")
+    open_, close = SHAPES.get(shape, SHAPES["rect"])
+    return f'{mermaid_id(n["id"])}{open_}"{_q(label)}"{close}'
 
 
 def _flowchart(d: dict, expanded: set[str]) -> str:
@@ -87,7 +94,8 @@ def _flowchart(d: dict, expanded: set[str]) -> str:
             lines.append("  " + _node_line(n))
     for e in _edges(d, rep):
         a, b = mermaid_id(e["source"]), mermaid_id(e["target"])
-        lines.append(f'  {a} -->|{_q(e["label"])}| {b}' if e["label"] else f"  {a} --> {b}")
+        arrow = "-.->" if e["kind"] in DASHED_KINDS else "-->"
+        lines.append(f'  {a} {arrow}|{_q(e["label"])}| {b}' if e["label"] else f"  {a} {arrow} {b}")
     return "\n".join(lines) + "\n"
 
 

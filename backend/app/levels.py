@@ -68,6 +68,7 @@ class Views:
         self.parents: dict[str, Optional[str]] = {}   # element id -> parent element id (roll-up chain)
         self.locate: dict[str, str] = {}               # element id -> deepest diagram id where it is a node
         self.ceiling = config.DEFAULT_NODE_CEILING
+        self._callers = None                           # built lazily by flows.callers_index
 
     def as_dict(self):
         return {"components": self.components, "diagrams": self.diagrams, "parents": self.parents,
@@ -173,6 +174,8 @@ def build_views(model: dict, ceiling: int = config.DEFAULT_NODE_CEILING) -> View
         v.parents[c["id"]] = c["file"]
     for fn in funcs.values():
         v.parents[fn["id"]] = fn["class"] or fn["file"]
+        if fn.get("flow") is not None and not files[fn["file"]].get("isTest"):
+            v.locate[fn["id"]] = f"flow:{fn['id']}"     # built on demand by flows.build
     return v
 
 

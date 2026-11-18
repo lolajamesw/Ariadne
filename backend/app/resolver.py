@@ -70,7 +70,6 @@ def resolve(model: dict) -> None:
     def sub_rel(level: int, module: str, name: str, importer: str) -> str | None:
         return lookup_rel(level, (module + "." + name) if module else name, importer)
 
-    top_level_names = {p.split("/")[0].removesuffix(".py") for p in py_paths}
     for f in files.values():
         if f["kind"] != "python":
             continue
@@ -78,26 +77,32 @@ def resolve(model: dict) -> None:
         for imp in f["imports"]:
             hit: set[str] = set()
             mod, names, level = imp["module"], imp["names"], imp["level"]
+            sub_for: dict[str, str | None] = {}
             if level:
                 m = lookup_rel(level, mod, f["path"])
-                if m:
-                    hit.add(m)
                 for n in names:
-                    s = sub_rel(level, mod, n, f["path"])
-                    if s:
-                        hit.add(s)
+                    sub_for[n] = sub_rel(level, mod, n, f["path"])
             else:
                 m = lookup_abs(mod, f["path"]) if mod else None
-                if m:
-                    hit.add(m)
                 for n in names:
-                    s = lookup_abs(f"{mod}.{n}" if mod else n, f["path"])
-                    if s:
-                        hit.add(s)
-                if not hit and mod:
-                    external.add(mod.split(".")[0])
+                    sub_for[n] = lookup_abs(f"{mod}.{n}" if mod else n, f["path"])
+            if m:
+                hit.add(m)
+            hit.update(x for x in sub_for.values() if x)
+            if not level and not hit and mod:
+                external.add(mod.split(".")[0])
             hit.discard(f["path"])
             imp["resolved"] = sorted(ids.file_id(h) for h in hit)
+            imp["moduleFile"] = ids.file_id(m) if m and m != f["path"] else None
+            for b in imp.get("bindings", []):      # per-name targets, used by call resolution (calls.py)
+                if b["name"] is None:              # `import a.b.c [as x]`
+                    bm = lookup_abs(b["module"], f["path"])
+                    b["moduleFile"] = ids.file_id(bm) if bm and bm != f["path"] else None
+                    b["subFile"] = None
+                else:                              # `from m import n [as x]`
+                    b["moduleFile"] = imp["moduleFile"]
+                    sf = sub_for.get(b["name"])
+                    b["subFile"] = ids.file_id(sf) if sf and sf != f["path"] else None
             targets |= {ids.file_id(h) for h in hit}
         f["importsFiles"] = sorted(targets)
         f["external"] = sorted(external)

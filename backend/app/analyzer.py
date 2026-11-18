@@ -57,9 +57,17 @@ def parse_python_file(rel_path: str, source: bytes) -> dict:
     def handle_import(node):
         if node.type == "import_statement":
             for ch in node.named_children:
-                target = ch.child_by_field_name("name") if ch.type == "aliased_import" else ch
+                alias = None
+                target = ch
+                if ch.type == "aliased_import":
+                    target = ch.child_by_field_name("name")
+                    a = ch.child_by_field_name("alias")
+                    alias = _text(a) if a is not None else None
                 if target is not None and target.type == "dotted_name":
-                    rec["imports"].append({"module": _text(target), "names": [], "level": 0, "line": _line(node)})
+                    mod = _text(target)
+                    rec["imports"].append({
+                        "module": mod, "names": [], "level": 0, "line": _line(node),
+                        "bindings": [{"local": alias or mod.split(".")[0], "module": mod, "name": None, "alias": bool(alias)}]})
         elif node.type == "import_from_statement":
             mod = node.child_by_field_name("module_name")
             level, module = 0, ""
@@ -72,14 +80,17 @@ def parse_python_file(rel_path: str, source: bytes) -> dict:
                             module = _text(c)
                 else:
                     module = _text(mod)
-            names = []
+            names, bindings = [], []
             for n in node.children_by_field_name("name"):
                 t = n.child_by_field_name("name") if n.type == "aliased_import" else n
+                al = n.child_by_field_name("alias") if n.type == "aliased_import" else None
                 if t is not None:
                     names.append(_text(t))
+                    bindings.append({"local": _text(al) if al is not None else _text(t), "module": module,
+                                     "name": _text(t), "level": level})
             if any(c.type == "wildcard_import" for c in node.children):
                 names.append("*")
-            rec["imports"].append({"module": module, "names": names, "level": level, "line": _line(node)})
+            rec["imports"].append({"module": module, "names": names, "level": level, "line": _line(node), "bindings": bindings})
 
     def collect_self_attrs(fn_node, attrs: dict):
         """Attributes from `self.x = ...` / `self.x: T = ...` anywhere in __init__ (not nested defs)."""
@@ -212,3 +223,8 @@ def analyze(root: Path, scan_result, check_cancel: Callable[[], None] = lambda: 
                       "functions": [], "isTest": is_test_path(rel)}
     on_progress(n, n)
     return {"files": files, "classes": classes, "functions": funcs}
+
+
+from . import flow_extract as _flow_extract  # noqa: E402  (imported last: flow_extract lazily imports this module)
+
+FLOW_HOOK = _flow_extract.extract

@@ -102,6 +102,22 @@ def test_wrapper_descent():
     assert "comp:src/app/core" in ids_ and "comp:src/app/web" in ids_
 
 
+def test_search_index_targets_deepest_node():
+    from app import search
+    m = small_app(); v = build(m)
+    def crumbs(vv, did):
+        out, cur = [], did
+        while cur:
+            d = vv.diagrams[cur]; out.append({"id": cur, "label": d["crumb"]}); cur = d["parent"]
+        return list(reversed(out))
+    idx = {i["id"]: i for i in search.build_index(m, v, crumbs)}
+    fn = idx["func:services/users.py::UserService.create"]
+    assert fn["target"] == "class:services/users.py::UserService" and fn["diagramId"] == "uml:comp:services"
+    assert fn["route"] == ["Overview", "services (UML)"]
+    assert idx["comp:api"]["route"] == ["Overview"]
+    assert idx["file:api/routes.py"]["diagramId"] == "fm:comp:api"
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

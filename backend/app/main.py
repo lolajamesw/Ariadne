@@ -7,7 +7,8 @@ from urllib.parse import unquote
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
-from . import config, github, ingest, levels, mermaid, storage
+from . import config, flows, github, ingest, levels, mermaid, search, storage
+from .ids import mermaid_id
 
 app = FastAPI(title="Ariadne demo API")
 _views_cache: dict[tuple, levels.Views] = {}
@@ -123,7 +124,7 @@ def _breadcrumb(v: levels.Views, diagram_id: str) -> list[dict]:
 def diagram(owner: str, repo: str, diagram_id: str, expanded: str = "", ceiling: int | None = None):
     model, v = _views(owner, repo, ceiling)
     diagram_id = unquote(diagram_id)
-    d = v.diagrams.get(diagram_id)
+    d = v.diagrams.get(diagram_id) or flows.build(model, v, diagram_id)   # flow:/calls: are built on demand
     if not d:
         raise HTTPException(404, f"No diagram {diagram_id}")
     exp = {e for e in expanded.split(",") if e}
@@ -133,7 +134,14 @@ def diagram(owner: str, repo: str, diagram_id: str, expanded: str = "", ceiling:
         model["meta"] = meta
         storage.save_model(owner, repo, model)
     comp = v.components.get(d["compId"]) if d["compId"] else None
-    return {"diagram": d, "mermaid": mermaid.to_mermaid(d, exp), "breadcrumb": _breadcrumb(v, diagram_id),
+    id_map = {mermaid_id(n["id"]): n["id"] for n in d["nodes"]}
+    id_map.update({mermaid_id(g["id"]): g["id"] for g in d.get("groups", [])})
+    classes = {}
+    for n in d["nodes"]:
+        c = [k for k, on in (("edge", n.get("edgeCase")), ("unresolved", n.get("unresolved")), ("focus", n.get("focus"))) if on]
+        if c:
+            classes[n["id"]] = c
+    return {"diagram": d, "idMap": id_map, "classes": classes, "mermaid": mermaid.to_mermaid(d, exp), "breadcrumb": _breadcrumb(v, diagram_id),
             "component": comp, "siblings": comp["diagrams"] if comp else {}, "meta": meta}
 
 
@@ -161,7 +169,13 @@ def element(owner: str, repo: str, element_id: str):
     while cur:
         chain.append(cur)
         cur = v.parents.get(cur)
-    return {"element": rec, "ancestors": chain, "diagram": v.locate.get(eid)}
+    out = {"element": rec, "ancestors": chain, "diagram": v.locate.get(eid)}
+    if eid in model["files"]:   # "a function listed in a file's detail panel" (spec 5.4)
+        out["functions"] = sorted(
+            ({"id": f["id"], "qualname": f["qualname"], "line": f["line"], "endLine": f["endLine"],
+              "hasFlow": f["id"] in v.locate} for f in model["functions"].values() if f["file"] == eid),
+            key=lambda x: x["line"])
+    return out
 
 
 @app.get("/api/repos/{owner}/{repo}/source")
@@ -182,3 +196,16 @@ async def source(owner: str, repo: str, path: str, start: int | None = None, end
         f"https://github.com/{owner}/{repo}/blob/{meta['commit']}/{path}"
         + (f"#L{start}-L{end}" if start and end else ""))
     return {"path": path, "text": text, "commit": meta["commit"], "githubUrl": gh, "start": start, "end": end}
+
+
+@app.get("/api/repos/{owner}/{repo}/search-index")
+def search_index(owner: str, repo: str):
+    model, v = _views(owner, repo)
+    return search.build_index(model, v, _breadcrumb)
+
+
+# Serve the built frontend (npm run build) from the same port when present.
+_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if _dist.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")

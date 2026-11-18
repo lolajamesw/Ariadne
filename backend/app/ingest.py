@@ -4,7 +4,7 @@ import shutil, subprocess, threading, time, uuid, os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import analyzer, config, levels, mermaid, resolver, scanner, storage
+from . import analyzer, calls, config, levels, mermaid, resolver, scanner, storage
 from .scanner import Cancelled
 
 STAGES = ["Downloading", "Scanning files", "Parsing", "Building diagrams"]
@@ -81,6 +81,7 @@ def build_model(root: Path, meta: dict, job: Job | None = None) -> dict:
     raw = analyzer.analyze(root, sr, check, prog)
     model = {"meta": meta, **raw, "contextFiles": sorted(sr.context_files)}
     resolver.resolve(model)
+    calls.resolve_all(model)
     if job:
         job.set_stage(3)
     views = levels.build_views(model, storage.settings()["nodeCeiling"])
